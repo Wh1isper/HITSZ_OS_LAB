@@ -1,0 +1,154 @@
+#!/usr/bin/env stap
+%{
+#include<linux/list.h>	
+#include<linux/sched.h>
+%}
+
+function get_task_struct:string(task:long)
+%{
+	struct task_struct *task = (struct task_struct *)STAP_ARG_task;
+	if (task)
+		snprintf(STAP_RETVALUE, MAXSTRINGLEN, 
+			"cur_pid:%d, comm: %s@%p,\n"
+			"  state:%ld,\n" 
+			"  flags:%d,\n"  
+			"  stackAddr:%p,\n"
+			"  group_leader:%p,\n"
+			"  parent:%p,\n"
+			"  thread_node:%p,\n"
+			"  children_node:%p,\n"
+			"  sibling:%p,\n"
+			"  fs:%p,\n"
+			"  mm:%p\n"
+			"---------------------------\n",
+			task->pid, task->comm, task,
+			task->state,
+			task->flags,
+			task->stack,
+			(void*)task->group_leader,
+			(void*)task->parent,
+			&task->thread_node,
+			&task->children,
+			&task->sibling,
+			(void*)task->fs,
+			(void*)task->mm
+		);
+	else
+		snprintf(STAP_RETVALUE, MAXSTRINGLEN, "err1");
+%}
+
+
+function task_trav:string (cur_task:long) %{
+	
+	struct task_struct *task = (struct task_struct *)STAP_ARG_cur_task;
+	struct task_struct *zero_task = task;
+	struct task_struct *next_task;
+	if (!task)
+		snprintf(STAP_RETVALUE, MAXSTRINGLEN, "err2");
+	
+	// find pid:0
+	while(zero_task&&zero_task->pid)
+		if(zero_task)
+		{
+			STAP_PRINTF("pid:%d", zero_task->pid);
+			if (zero_task)
+				STAP_PRINTF("<<", zero_task->pid);
+			zero_task = zero_task->parent;
+		}
+	STAP_PRINTF("pid:%d", zero_task->pid);
+	STAP_PRINTF("\n");
+%}
+
+function find_sibling:string(task:long)
+%{
+	struct task_struct *task = (struct task_struct *)STAP_ARG_task;
+	struct task_struct *sibling ;
+	struct task_struct *next_task;
+	struct list_head *list;
+	int count = 0;
+	STAP_PRINTF("sibling----------------\n");
+	list_for_each(list,&(task->sibling)){
+		sibling = list_entry(list,struct task_struct,sibling);
+		if (sibling->pid)
+		{
+			count ++;
+			STAP_PRINTF("  sibling No.:%d,comm: %s(%d),\n", count,sibling->comm,sibling->pid);
+			STAP_PRINTF("    parent:%s,\n",sibling->parent->comm);
+			STAP_PRINTF("    parent addr:%p\n",sibling->parent);
+		}
+	}
+	if(!count)
+		snprintf(STAP_RETVALUE, MAXSTRINGLEN, "no sibling\n");
+	else
+		snprintf(STAP_RETVALUE, MAXSTRINGLEN, "sibling number:%d\n",count);
+	
+%}
+
+function get_files:long(task:long)
+{
+	files = @cast(task,"task_struct","kernel<linux/sched.h>")->files
+	count = 0
+//	for (i=0;i<64;i++)
+//	{
+//		fd_array = @cast(files,"files_struct","kernel<linux/fdtable.h>")->fd_array[i]
+//		if (fd_array)
+//		{
+//			print(fullpath_struct_file(task,fd_array),"\n");
+//			count++;
+//		}
+//		else
+//			break;
+//	}
+	print("open-file-----------------\n")
+	for( i = 0; i< @cast(files, "files_struct","kernel<linux/fdtable.h>")->fdt->max_fds; i++) 
+	{
+			cur_file = @cast(files, "files_struct","kernel<linux/fdtable.h>")->fdt->fd[i];
+			if(cur_file)
+			{
+				print("  ",fullpath_struct_file(task, cur_file),"\n");
+				count++;
+			}
+	}
+	return count
+}
+
+function parent_pid:long(task:long){
+		parent_count = 0
+		parent = task_parent(task)
+		
+		while(task_pid(parent))
+		{
+			parent_pid_list[parent_count++] = task_pid(parent)
+			parent = task_parent(parent)
+		}
+		print("0>>")
+		
+		for (i=parent_count-1;i>=0;i--){
+			printf("%s:(%d)",task_execname(pid2task(parent_pid_list[i])),parent_pid_list[i])
+			print(">>")
+		}
+		printf("%s:(%d)\n",task_execname(task),task_pid(task))
+		
+}
+
+global parent_pid_list
+global parent_count
+probe begin{
+	print("task_struct.stp is running!\n")
+	target = target()
+	cur_task = pid2task(target)
+	task_struct = get_task_struct(cur_task)
+	if (task_struct == "err1")
+	{
+		printf("can't access to task:%d\n",target)
+	}
+	else{
+		print(task_struct)
+		parent_pid(cur_task)
+//			print(task_trav(cur_task))
+		print(find_sibling(cur_task))
+		printf("opening file number:%d\n", get_files(cur_task))	
+	}
+	exit();
+}
+

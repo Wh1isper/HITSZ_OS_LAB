@@ -1,0 +1,35 @@
+#!/usr/bin/env stap
+
+probe begin{
+	print("proc.stp is running!\n")
+}
+
+probe scheduler.process_fork{
+	printf("[scheduler.process_fork]: PID:%d->%d\n",pid(),child_pid)
+}
+
+probe kprocess.exec{
+	printf("[kprocess.exec]: filename:%s\n",filename)
+}
+
+probe kprocess.exit{
+	printf("[kprocess.exit]: return code:%d\n",code)
+}
+
+probe kprocess.*,
+			scheduler.process_fork,
+			scheduler.wakeup_new,
+			scheduler.process_exit,
+			scheduler.process_free,
+			syscall.wait*,
+			syscall.fork,
+			syscall.exec*,
+			syscall.exit{
+	cur_task = task_current()
+		
+	parent = task_parent(cur_task)
+	p_name = task_execname(parent)
+	p_pid = task_pid(parent)
+	printf("%d[  %s]/  %d[  %s] %s\n",pid(),execname(),p_pid,p_name,pn())
+}
+
